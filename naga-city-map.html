@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Naga City Professional GIS Navigator</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.css" />
+    
+    <style>
+        :root { 
+            --adnu: #003366; 
+            --route-blue: #2980b9; 
+            --c-rest: #f39c12;
+            --c-hosp: #27ae60;
+            --c-mall: #e74c3c;
+            --c-hotel: #3498db;
+        }
+        body { margin: 0; font-family: 'Segoe UI', sans-serif; display: flex; height: 100vh; overflow: hidden; }
+        
+        #sidebar { width: 350px; background: #fff; border-right: 1px solid #ddd; display: flex; flex-direction: column; z-index: 1002; transition: transform 0.3s ease; }
+        #sidebar.hidden { transform: translateX(-350px); width: 0; }
+        
+        .sidebar-header { padding: 20px; background: var(--adnu); color: white; flex-shrink: 0; box-sizing: border-box; }
+        
+        #search-box { 
+            width: 100%; 
+            padding: 12px; 
+            border-radius: 6px; 
+            border: none; 
+            margin: 15px 0; 
+            font-size: 14px; 
+            box-sizing: border-box; 
+            outline: none;
+        }
+        
+        .filter-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 11px; }
+        .filter-item { background: rgba(255,255,255,0.15); padding: 8px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+
+        #list-container { flex-grow: 1; overflow-y: auto; background: #fcfcfc; padding: 15px; }
+        .cat-label { font-size: 10px; font-weight: 900; color: #bbb; text-transform: uppercase; margin: 15px 0 5px 5px; letter-spacing: 1px; }
+        
+        .list-card { background: white; padding: 12px; margin-bottom: 8px; border-radius: 8px; border: 1px solid #eee; cursor: pointer; transition: 0.2s; font-size: 13px; font-weight: 600; }
+        .list-card:hover { transform: translateX(4px); box-shadow: 0 4px 8px rgba(0,0,0,0.05); }
+        
+        /* Color Coding based on Type */
+        .list-card.restaurant { border-left: 6px solid var(--c-rest); color: #d35400; }
+        .list-card.hospital { border-left: 6px solid var(--c-hosp); color: #1e8449; }
+        .list-card.mall { border-left: 6px solid var(--c-mall); color: #c0392b; }
+        .list-card.hotel { border-left: 6px solid var(--c-hotel); color: #2980b9; }
+
+        #map-wrapper { flex-grow: 1; position: relative; }
+        #map { height: 100%; width: 100%; }
+        #menu-btn { position: absolute; top: 15px; left: 15px; z-index: 1100; padding: 10px 18px; background: var(--adnu); color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        
+        #route-panel {
+            position: absolute; bottom: 25px; left: 50%; transform: translateX(-50%);
+            z-index: 1005; background: white; padding: 20px; border-radius: 15px;
+            width: 320px; box-shadow: 0 15px 35px rgba(0,0,0,0.3); display: none;
+            border-top: 6px solid var(--route-blue);
+        }
+        .stats-row { display: flex; justify-content: space-between; margin-top: 15px; text-align: center; }
+        .stat-v { background: #f8f9fa; padding: 10px; border-radius: 10px; flex: 1; margin: 0 4px; }
+        .stat-v span { font-size: 10px; color: #777; display: block; }
+        .stat-v b { font-size: 15px; color: var(--adnu); }
+
+        .leaflet-routing-container { display: none !important; }
+    </style>
+</head>
+<body>
+
+<div id="sidebar">
+    <div class="sidebar-header">
+        <h2 style="margin:0; font-size: 18px; text-align: center;">Naga Smart Navigator</h2>
+        <input type="text" id="search-box" placeholder="Search 65 destinations..." onkeyup="updateUI()">
+        <div class="filter-grid">
+            <label class="filter-item"><input type="checkbox" checked id="f-restaurant" onchange="updateUI()">🍴 Food</label>
+            <label class="filter-item"><input type="checkbox" checked id="f-hospital" onchange="updateUI()">🏥 Hosp</label>
+            <label class="filter-item"><input type="checkbox" checked id="f-mall" onchange="updateUI()">🛍️ Mall</label>
+            <label class="filter-item"><input type="checkbox" checked id="f-hotel" onchange="updateUI()">🏨 Hotel</label>
+        </div>
+    </div>
+    <div id="list-container"></div>
+</div>
+
+<div id="map-wrapper">
+    <button id="menu-btn" onclick="toggleSidebar()">☰ MENU</button>
+    <div id="map"></div>
+    <div id="route-panel">
+        <h3 id="target-name" style="margin:0; color:#222; font-size:16px;"></h3>
+        <div id="target-dist" style="margin:5px 0; font-size:12px; color:var(--route-blue); font-weight:800;"></div>
+        <div class="stats-row">
+            <div class="stat-v"><span>🚗 Car</span><b id="time-car">--</b></div>
+            <div class="stat-v"><span>🛺 Trike</span><b id="time-trike">--</b></div>
+            <div class="stat-v"><span>🚶 Walk</span><b id="time-walk">--</b></div>
+        </div>
+    </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.js"></script>
+
+<script>
+    const adnuOrigin = [13.630641, 123.185170];
+    const map = L.map('map', { zoomControl: false }).setView(adnuOrigin, 15);
+    let routing = null;
+    let markers = [];
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+    const iconMap = { restaurant: 'orange', hospital: 'green', mall: 'red', hotel: 'blue', start: 'gold' };
+    const createIcon = (color) => L.icon({
+        iconUrl: `https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-${color}.png`,
+        iconSize: [25, 41], iconAnchor: [12, 41]
+    });
+
+    L.marker(adnuOrigin, { icon: createIcon(iconMap.start) }).addTo(map).bindTooltip("Origin: ADNU");
+
+    const establishments = [
+        // RESTAURANTS
+        { name: "Casa Soriano Family Heirloom Cuisine", type: "restaurant", coords: [13.622065, 123.217298] },
+        { name: "GEEWAN", type: "restaurant", coords: [13.621912, 123.189976] },
+        { name: "Coconatz – Bicolano Resto", type: "restaurant", coords: [13.627471, 123.190286] },
+        { name: "Naga Garden Restaurant", type: "restaurant", coords: [13.620607, 123.189841] },
+        { name: "SOLEDAD Restaurant", type: "restaurant", coords: [13.630936, 123.196579] },
+        { name: "Antigüa Restaurant", type: "restaurant", coords: [13.632233, 123.189262] },
+        { name: "Chef Doy’s", type: "restaurant", coords: [13.631528, 123.197598] },
+        { name: "Pandawan Seafood Restaurant", type: "restaurant", coords: [13.631173, 123.197044] },
+        { name: "Lola Feling Restaurant", type: "restaurant", coords: [13.658245, 123.198149] },
+        { name: "Crown Park Restaurant", type: "restaurant", coords: [13.615472, 123.192922] },
+        { name: "Parrilla Vaca! Bar & Grill", type: "restaurant", coords: [13.627734, 123.200257] },
+        { name: "Perrie’s Seafood & Grill", type: "restaurant", coords: [13.645171, 123.209212] },
+        { name: "Zmokey’s BBQ", type: "restaurant", coords: [13.622110, 123.216661] },
+        { name: "Bigg’s Diner - San Felipe", type: "restaurant", coords: [13.644577, 123.204088] },
+        { name: "Bigg’s Diner - Magsaysay", type: "restaurant", coords: [13.631664, 123.196933] },
+        { name: "Bigg’s Diner - Barlin", type: "restaurant", coords: [13.628435, 123.186456] },
+        { name: "Bigg’s Diner - Centro", type: "restaurant", coords: [13.624793, 123.185699] },
+        { name: "Bigg’s Diner - SM", type: "restaurant", coords: [13.622061, 123.190289] },
+        { name: "Bigg’s Diner - Robinson", type: "restaurant", coords: [13.616101, 123.192674] },
+        { name: "Bigg’s Diner - BMC", type: "restaurant", coords: [13.625041, 123.199147] },
+        { name: "Bigg’s Diner - Grande", type: "restaurant", coords: [13.622100, 123.217555] },
+        { name: "Bigg’s Diner - Winwin", type: "restaurant", coords: [13.618064, 123.189630] },
+        { name: "Graceland - Baker's Plaza", type: "restaurant", coords: [13.625114, 123.186148] },
+        { name: "Graceland - Centro", type: "restaurant", coords: [13.624942, 123.184947] },
+        { name: "Graceland - Panganiban", type: "restaurant", coords: [13.621639, 123.189807] },
+        { name: "Graceland - Magsaysay", type: "restaurant", coords: [13.631752, 123.196473] },
+        { name: "AJL Chicken Bacolod", type: "restaurant", coords: [13.625831, 123.200696] },
+        // HOSPITALS
+        { name: "Bicol Medical Center", type: "hospital", coords: [13.623169, 123.198620] },
+        { name: "Naga City General Hospital", type: "hospital", coords: [13.627312, 123.208035] },
+        { name: "NICC Doctors Hospital", type: "hospital", coords: [13.616179, 123.192793] },
+        { name: "St. John Hospital, Inc.", type: "hospital", coords: [13.622954, 123.190455] },
+        { name: "Dr. Nilo O. Roa Memorial", type: "hospital", coords: [13.626236, 123.187144] },
+        { name: "Our Lady of Lourdes Infirmary", type: "hospital", coords: [13.663484, 123.277891] },
+        { name: "Bicol AccessHealth Centrum", type: "hospital", coords: [13.618875, 123.192010] },
+        { name: "Plaza Medica", type: "hospital", coords: [13.621288, 123.194159] },
+        { name: "Mother Seton Hospital", type: "hospital", coords: [13.618665, 123.196921] },
+        // MALLS
+        { name: "SM City Naga", type: "mall", coords: [13.621351, 123.190264] },
+        { name: "Robinsons Place Naga", type: "mall", coords: [13.615618, 123.193318] },
+        { name: "Vista Mall Naga", type: "mall", coords: [13.618644, 123.235141] },
+        { name: "Yashano Mall Naga", type: "mall", coords: [13.615970, 123.195000] },
+        { name: "Nagaland E-Mall", type: "mall", coords: [13.625412, 123.186381] },
+        { name: "LCC Mall Naga City", type: "mall", coords: [13.619185, 123.179540] },
+        { name: "Grand Master Mall", type: "mall", coords: [13.624190, 123.183902] },
+        { name: "101 Shopping Center", type: "mall", coords: [13.618918, 123.183637] },
+        { name: "Avenue Square", type: "mall", coords: [13.632313, 123.196297] },
+        { name: "Win Win Mall", type: "mall", coords: [13.616011, 123.189826] },
+        { name: "LCC Naga CBD 2", type: "mall", coords: [13.620047, 123.189297] },
+        { name: "Naga City People's Mall", type: "mall", coords: [13.621459, 123.183680] },
+        { name: "Super Metro Hypermarket", type: "mall", coords: [13.622163, 123.198361] },
+        // HOTELS
+        { name: "Avenue Plaza Hotel", type: "hotel", coords: [13.632796, 123.196473] },
+        { name: "Villa Caceres Hotel", type: "hotel", coords: [13.628172, 123.199347] },
+        { name: "The Litton Hotel", type: "hotel", coords: [13.630775, 123.197196] },
+        { name: "Lotus Blu Hotel Naga", type: "hotel", coords: [13.616351, 123.194945] },
+        { name: "The Isabelle Hotel", type: "hotel", coords: [13.626122, 123.187669] },
+        { name: "Go Hotels Plus Naga", type: "hotel", coords: [13.613695, 123.193977] },
+        { name: "Summit Hotel Naga", type: "hotel", coords: [13.613405, 123.193825] },
+        { name: "Primus Hotel & Resort", type: "hotel", coords: [13.657132, 123.257281] },
+        { name: "CBD Plaza Hotel", type: "hotel", coords: [13.619554, 123.188834] },
+        { name: "Robertson Hotel", type: "hotel", coords: [13.627692, 123.198508] },
+        { name: "NagaLand Hotel", type: "hotel", coords: [13.625525, 123.186065] },
+        { name: "UMA Hotel & Residences", type: "hotel", coords: [13.632257, 123.195489] },
+        { name: "Hotel Sogo - Naga", type: "hotel", coords: [13.618695, 123.190523] },
+        { name: "Villa Rosita Hotel", type: "hotel", coords: [13.620525, 123.184211] },
+        { name: "The Teapot Hotel", type: "hotel", coords: [13.626042, 123.187506] },
+        { name: "Blue Paseo Grande Inn", type: "hotel", coords: [13.617866, 123.224660] }
+    ];
+
+    function calculateSmartRoute(loc) {
+        if (routing) map.removeControl(routing);
+        
+        routing = L.Routing.control({
+            waypoints: [L.latLng(adnuOrigin), L.latLng(loc.coords)],
+            show: false,
+            altLineOptions: { styles: [] }, 
+            lineOptions: { styles: [{ color: '#2980b9', weight: 8, opacity: 0.9 }] },
+            createMarker: () => null
+        }).on('routesfound', function(e) {
+            const best = e.routes[0].summary;
+            const km = (best.totalDistance / 1000).toFixed(2);
+            document.getElementById('target-name').innerText = loc.name;
+            document.getElementById('target-dist').innerText = km + " KM FROM ADNU";
+            document.getElementById('time-car').innerText = Math.round(best.totalTime/60 + 1) + "m";
+            document.getElementById('time-trike').innerText = Math.round((km/13)*60) + "m";
+            document.getElementById('time-walk').innerText = Math.round((km/4.5)*60) + "m";
+            document.getElementById('route-panel').style.display = 'block';
+        }).addTo(map);
+        map.flyTo(loc.coords, 16);
+    }
+
+    function updateUI() {
+        const query = document.getElementById('search-box').value.toLowerCase();
+        const filters = {
+            restaurant: document.getElementById('f-restaurant').checked,
+            hospital: document.getElementById('f-hospital').checked,
+            mall: document.getElementById('f-mall').checked,
+            hotel: document.getElementById('f-hotel').checked
+        };
+
+        const container = document.getElementById('list-container');
+        container.innerHTML = "";
+        markers.forEach(m => map.removeLayer(m));
+        markers = [];
+
+        ['restaurant', 'hospital', 'mall', 'hotel'].forEach(cat => {
+            if (filters[cat]) {
+                const results = establishments.filter(e => e.type === cat && e.name.toLowerCase().includes(query));
+                if (results.length > 0) {
+                    const label = document.createElement('div');
+                    label.className = 'cat-label';
+                    label.innerText = cat + 's';
+                    container.appendChild(label);
+
+                    results.forEach(loc => {
+                        const m = L.marker(loc.coords, { icon: createIcon(iconMap[loc.type]) }).addTo(map);
+                        m.on('click', () => calculateSmartRoute(loc));
+                        markers.push(m);
+
+                        const card = document.createElement('div');
+                        card.className = `list-card ${loc.type}`;
+                        card.innerText = loc.name;
+                        card.onclick = () => { calculateSmartRoute(loc); };
+                        container.appendChild(card);
+                    });
+                }
+            }
+        });
+    }
+
+    function toggleSidebar() { document.getElementById('sidebar').classList.toggle('hidden'); }
+
+    // Initial Load
+    updateUI();
+
+    map.on('click', () => {
+        if (routing) map.removeControl(routing);
+        document.getElementById('route-panel').style.display = 'none';
+    });
+</script>
+</body>
+</html>
