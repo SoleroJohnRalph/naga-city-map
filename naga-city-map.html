@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Naga City WayFinder - Complete Edition</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.css" />
+    
+    <style>
+        :root { 
+            --adnu-blue: #060771; 
+            --adnu-gold: #FFE08F;
+            --accent-orange: #FF6C0C; 
+            --glass: rgba(255, 255, 255, 0.96);
+        }
+        
+        html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; font-family: 'Segoe UI', sans-serif; }
+        #map { position: absolute; top: 0; bottom: 0; left: 0; right: 0; z-index: 1; background: #222; }
+
+        #sidebar { 
+            position: absolute; top: 20px; left: 20px; bottom: 20px; width: 340px;
+            background: var(--glass); z-index: 1002; border-radius: 24px;
+            border: 2px solid var(--adnu-blue); display: flex; flex-direction: column;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.3); backdrop-filter: blur(15px);
+            transition: transform 0.6s cubic-bezier(0.19, 1, 0.22, 1), opacity 0.5s;
+        }
+
+        #sidebar.hidden { transform: translateX(-400px); opacity: 0; }
+
+        .sidebar-header { padding: 25px; background: var(--adnu-blue); color: var(--adnu-gold); border-radius: 21px 21px 0 0; }
+        #search-box { width: 100%; padding: 14px; border-radius: 12px; border: 2px solid var(--adnu-gold); margin-top: 15px; outline: none; font-weight: 600; font-size: 14px; box-sizing: border-box; }
+
+        .filter-container { display: flex; gap: 8px; padding: 12px 0 0 0; overflow-x: auto; scrollbar-width: none; }
+        .filter-container::-webkit-scrollbar { display: none; }
+        
+        .chip { padding: 6px 14px; background: rgba(255, 255, 255, 0.15); border: 1px solid var(--adnu-gold); border-radius: 20px; color: white; font-size: 10px; font-weight: 700; cursor: pointer; white-space: nowrap; transition: 0.3s; text-transform: uppercase; }
+        .chip.active { background: var(--adnu-gold); color: var(--adnu-blue); }
+
+        #list-container { flex-grow: 1; overflow-y: auto; padding: 15px; }
+        .list-card { background: white; padding: 16px; margin-bottom: 12px; border-radius: 15px; cursor: pointer; border-left: 8px solid var(--adnu-blue); transition: 0.3s; box-shadow: 0 4px 10px rgba(0,0,0,0.05); display: flex; flex-direction: column; }
+        .list-card:hover { transform: translateY(-3px); border-color: var(--accent-orange); }
+
+        #toggle-btn { position: absolute; left: 20px; top: 20px; z-index: 1003; background: var(--adnu-blue); color: var(--adnu-gold); border: 2px solid var(--adnu-gold); width: 48px; height: 48px; cursor: pointer; border-radius: 14px; font-size: 22px; transition: left 0.6s cubic-bezier(0.19, 1, 0.22, 1); }
+        #sidebar:not(.hidden) ~ #toggle-btn { left: 380px; }
+
+        /* Floating GPS Button */
+        #gps-btn { position: absolute; right: 20px; bottom: 30px; z-index: 1002; background: white; border: 2px solid var(--adnu-blue); width: 50px; height: 50px; border-radius: 50%; cursor: pointer; font-size: 24px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); display: flex; align-items: center; justify-content: center; }
+
+        /* User Marker & Compass Styles */
+        .user-marker-container { display: flex; justify-content: center; align-items: center; }
+        .user-dot { width: 14px; height: 14px; background: #2A52BE; border: 3px solid white; border-radius: 50%; box-shadow: 0 0 10px rgba(0,0,0,0.3); z-index: 5; }
+        .user-heading-cone { position: absolute; top: -15px; width: 0; height: 0; border-left: 10px solid transparent; border-right: 10px solid transparent; border-bottom: 25px solid rgba(42, 82, 190, 0.4); z-index: 1; }
+
+        .pulse-pin { border: 4px solid white; border-radius: 50%; background: var(--accent-orange); animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(255, 108, 12, 0.7); } 70% { box-shadow: 0 0 0 15px rgba(255, 108, 12, 0); } 100% { box-shadow: 0 0 0 0 rgba(255, 108, 12, 0); } }
+
+        #info-sheet { position: absolute; bottom: -350px; left: 50%; transform: translateX(-50%); width: 90%; max-width: 420px; background: white; z-index: 1005; padding: 25px; border-radius: 25px; box-shadow: 0 -10px 40px rgba(0,0,0,0.4); transition: bottom 0.6s cubic-bezier(0.19, 1, 0.22, 1); border-top: 8px solid var(--adnu-blue); }
+        #info-sheet.active { bottom: 30px; }
+        .stat-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-top: 18px; }
+        .stat-box { background: #f0f2f5; padding: 12px; border-radius: 15px; text-align: center; }
+        .stat-box b { color: var(--adnu-blue); display: block; font-size: 16px; }
+    </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div id="sidebar">
+    <div class="sidebar-header">
+        <h2 style="margin:0; font-size:18px;">WayFinder</h2>
+        <input type="text" id="search-box" placeholder="Search Hospital, Mall, Food..." onkeyup="updateUI()">
+        <div class="filter-container">
+            <div class="chip active" onclick="filterCat('All', this)">All</div>
+            <div class="chip" onclick="filterCat('Hospital', this)">Hospitals</div>
+            <div class="chip" onclick="filterCat('Mall', this)">Malls</div>
+            <div class="chip" onclick="filterCat('Hotel', this)">Hotels</div>
+            <div class="chip" onclick="filterCat('Food', this)">Food</div>
+        </div>
+    </div>
+    <div id="list-container"></div>
+</div>
+
+<button id="toggle-btn" onclick="toggleSidebar()">☰</button>
+<button id="gps-btn" onclick="locateUser()">🎯</button>
+
+<div id="info-sheet">
+    <h3 id="name-txt" style="margin:0; color:var(--adnu-blue); font-size: 18px;"></h3>
+    <span id="dist-txt" style="color:var(--accent-orange); font-weight:bold; font-size:12px;"></span>
+    <div class="stat-grid">
+        <div class="stat-box"><span>🚗 Car</span><b id="time-car">--</b></div>
+        <div class="stat-box"><span>🛺 Trike</span><b id="time-trike">--</b></div>
+        <div class="stat-box"><span>🚶 Walk</span><b id="time-walk">--</b></div>
+    </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.js"></script>
+
+<script>
+    const adnuOrigin = [13.630641, 123.185170];
+    const map = L.map('map', { zoomControl: false }).setView(adnuOrigin, 15);
+    let routing = null;
+    let markers = [];
+    let currentCategory = 'All';
+    let userMarker = null;
+    let userHeading = 0;
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+    const establishments = [
+        // HOSPITALS
+        { name: "Bicol Medical Center", type: "Hospital", coords: [13.623065, 123.198620], color: '#060771', zone: 'Panganiban' },
+        { name: "Naga City General Hospital", type: "Hospital", coords: [13.627227, 123.208047], color: '#060771', zone: 'Balatas' },
+        { name: "NICC Doctors Hospital", type: "Hospital", coords: [13.616083, 123.192696], color: '#060771', zone: 'Roxas' },
+        { name: "St. John Hospital, Inc.", type: "Hospital", coords: [13.622744, 123.190476], color: '#060771', zone: 'Rotonda' },
+        { name: "Dr. Nilo O. Roa Memorial Hospital", type: "Hospital", coords: [13.626089, 123.187123], color: '#060771', zone: 'Centro' },
+        { name: "Our Lady of Lourdes Infirmary", type: "Hospital", coords: [13.663233, 123.277914], color: '#060771', zone: 'Carolina' },
+        { name: "Bicol AccessHealth Centrum", type: "Hospital", coords: [13.618674, 123.192009], color: '#060771', zone: 'Roxas' },
+        { name: "Plaza Medica", type: "Medical Center", coords: [13.621111, 123.194138], color: '#060771', zone: 'Panganiban' },
+        { name: "Mother Seton Hospital", type: "Hospital", coords: [13.618559, 123.196879], color: '#060771', zone: 'Diversion' },
+        
+        // MALLS
+        { name: "SM City Naga", type: "Mall", coords: [13.621130, 123.190348], color: '#BF1A1A', zone: 'Rotonda' },
+        { name: "Robinsons Place Naga", type: "Mall", coords: [13.615328, 123.193340], color: '#BF1A1A', zone: 'Roxas' },
+        { name: "Vista Mall Naga", type: "Mall", coords: [13.618442, 123.235162], color: '#BF1A1A', zone: 'Del Rosario' },
+        { name: "Yashano Mall Naga", type: "Mall", coords: [13.615770, 123.195000], color: '#BF1A1A', zone: 'Roxas' },
+        { name: "Nagaland E-Mall", type: "Mall", coords: [13.625194, 123.186360], color: '#BF1A1A', zone: 'Centro' },
+        { name: "LCC Mall Naga City", type: "Mall", coords: [13.619100, 123.179510], color: '#BF1A1A', zone: 'Sabang' },
+        { name: "Grand Master Mall", type: "Mall", coords: [13.623949, 123.183879], color: '#BF1A1A', zone: 'Centro' },
+        { name: "101 Shopping Center", type: "Mall", coords: [13.618384, 123.183709], color: '#BF1A1A', zone: 'Centro' },
+        { name: "Avenue Square", type: "Mall", coords: [13.632145, 123.196308], color: '#BF1A1A', zone: 'Magsaysay' },
+        { name: "Win Win Mall", type: "Mall", coords: [13.615822, 123.189782], color: '#BF1A1A', zone: 'CBD' },
+        { name: "LCC Naga CBD 2", type: "Mall", coords: [13.619839, 123.189262], color: '#BF1A1A', zone: 'CBD' },
+        { name: "Naga City People's Mall", type: "Mall", coords: [13.621366, 123.183699], color: '#BF1A1A', zone: 'Centro' },
+        { name: "Super Metro Hypermarket", type: "Mall", coords: [13.621923, 123.198467], color: '#BF1A1A', zone: 'Panganiban' },
+
+        // HOTELS
+        { name: "Avenue Plaza Hotel", type: "Hotel", coords: [13.632609, 123.196448], color: '#444', zone: 'Magsaysay' },
+        { name: "Villa Caceres Hotel", type: "Hotel", coords: [13.627981, 123.199347], color: '#444', zone: 'Magsaysay' },
+        { name: "The Litton Hotel", type: "Hotel", coords: [13.630682, 123.197225], color: '#444', zone: 'Magsaysay' },
+        { name: "Lotus Blu Hotel", type: "Hotel", coords: [13.616125, 123.194920], color: '#444', zone: 'Roxas' },
+        { name: "The Isabelle Hotel", type: "Hotel", coords: [13.626040, 123.187692], color: '#444', zone: 'Centro' },
+        { name: "Go Hotels Plus Naga", type: "Hotel", coords: [13.613453, 123.193945], color: '#444', zone: 'Roxas' },
+        { name: "Summit Hotel Naga", type: "Hotel", coords: [13.613215, 123.193835], color: '#444', zone: 'Roxas' },
+        { name: "Primus Hotel & Resort", type: "Hotel", coords: [13.656889, 123.257291], color: '#444', zone: 'Pacol' },
+        { name: "CBD Plaza Hotel", type: "Hotel", coords: [13.619455, 123.188833], color: '#444', zone: 'CBD' },
+        { name: "Robertson Hotel", type: "Hotel", coords: [13.627517, 123.198559], color: '#444', zone: 'Magsaysay' },
+        { name: "NagaLand Hotel", type: "Hotel", coords: [13.625374, 123.186048], color: '#444', zone: 'Centro' },
+        { name: "UMA Hotel & Residences", type: "Hotel", coords: [13.632078, 123.195520], color: '#444', zone: 'Magsaysay' },
+        { name: "Hotel Sogo - Naga", type: "Hotel", coords: [13.618526, 123.190606], color: '#444', zone: 'Rotonda' },
+        { name: "Villa Rosita Hotel", type: "Hotel", coords: [13.620327, 123.184233], color: '#444', zone: 'Centro' },
+        { name: "The Teapot Hotel", type: "Hotel", coords: [13.625833, 123.187535], color: '#444', zone: 'Centro' },
+        { name: "Blue Paseo Grande Inn", type: "Hotel", coords: [13.617730, 123.224575], color: '#444', zone: 'Concepcion' },
+
+        // FOOD
+        { name: "Casa Soriano Heirloom Cuisine", type: "Food", coords: [13.621769, 123.217301], color: '#FF6C0C', zone: 'Concepcion' },
+        { name: "GEEWAN", type: "Food", coords: [13.624358, 123.185170], color: '#FF6C0C', zone: 'Centro' },
+        { name: "Coconatz – Bicolano Resto", type: "Food", coords: [13.627254, 123.190286], color: '#FF6C0C', zone: 'Liboton' },
+        { name: "Naga Garden Restaurant", type: "Food", coords: [13.623124, 123.185478], color: '#FF6C0C', zone: 'Centro' },
+        { name: "SOLEDAD Restaurant", type: "Food", coords: [13.630841, 123.196601], color: '#FF6C0C', zone: 'Magsaysay' },
+        { name: "Antigüa Restaurant", type: "Food", coords: [13.632078, 123.189300], color: '#FF6C0C', zone: 'Bagumbayan' },
+        { name: "Chef Doy’s", type: "Food", coords: [13.631268, 123.197523], color: '#FF6C0C', zone: 'Magsaysay' },
+        { name: "Pandawan Seafood Restaurant", type: "Food", coords: [13.630890, 123.196993], color: '#FF6C0C', zone: 'Magsaysay' },
+        { name: "Lola Feling Restaurant", type: "Food", coords: [13.627303, 123.196137], color: '#FF6C0C', zone: 'Magsaysay' },
+        { name: "Crown Park Restaurant", type: "Food", coords: [13.623982, 123.185781], color: '#FF6C0C', zone: 'Centro' },
+        { name: "Parrilla Vaca! Bar & Grill", type: "Food", coords: [13.627549, 123.200236], color: '#FF6C0C', zone: 'Magsaysay' },
+        { name: "Perrie’s Seafood & Grill", type: "Food", coords: [13.644883, 123.209048], color: '#FF6C0C', zone: 'San Felipe' },
+        { name: "Zmokey’s BBQ", type: "Food", coords: [13.621406, 123.217499], color: '#FF6C0C', zone: 'Concepcion' },
+        { name: "Bigg’s - San Felipe", type: "Food", coords: [13.643270, 123.204821], color: '#FF6C0C', zone: 'San Felipe' },
+        { name: "Bigg’s - Magsaysay", type: "Food", coords: [13.630952, 123.196696], color: '#FF6C0C', zone: 'Magsaysay' },
+        { name: "Bigg’s - Barlin", type: "Food", coords: [13.627137, 123.186548], color: '#FF6C0C', zone: 'Barlin' },
+        { name: "Bigg’s - Centro", type: "Food", coords: [13.624793, 123.185699], color: '#FF6C0C', zone: 'Centro' },
+        { name: "Bigg’s - SM", type: "Food", coords: [13.620561, 123.189907], color: '#FF6C0C', zone: 'Rotonda' },
+        { name: "Bigg’s - Robinson", type: "Food", coords: [13.614704, 123.192724], color: '#FF6C0C', zone: 'Roxas' },
+        { name: "Bigg’s - BMC", type: "Food", coords: [13.623085, 123.199497], color: '#FF6C0C', zone: 'Panganiban' },
+        { name: "Bigg’s - Grande", type: "Food", coords: [13.621500, 123.217246], color: '#FF6C0C', zone: 'Concepcion' },
+        { name: "Bigg’s - Winwin", type: "Food", coords: [13.615812, 123.189553], color: '#FF6C0C', zone: 'CBD' },
+        { name: "AJL Chicken Bacolod", type: "Food", coords: [13.625632, 123.200724], color: '#FF6C0C', zone: 'Magsaysay' }
+    ];
+
+    function toggleSidebar() { document.getElementById('sidebar').classList.toggle('hidden'); }
+
+    // COMPASS & GPS ICON LOGIC
+    function getUserIcon(heading) {
+        return L.divIcon({
+            className: 'user-marker-container',
+            html: `<div style="transform: rotate(${heading}deg); position: relative; width:30px; height:30px; display:flex; justify-content:center; align-items:center;">
+                    <div class="user-heading-cone"></div>
+                    <div class="user-dot"></div>
+                   </div>`,
+            iconSize: [30, 30], iconAnchor: [15, 15]
+        });
+    }
+
+    window.addEventListener('deviceorientationabsolute', (e) => {
+        if (e.alpha !== null) {
+            userHeading = e.alpha; 
+            if (userMarker) userMarker.setIcon(getUserIcon(userHeading));
+        }
+    }, true);
+
+    function locateUser() {
+        map.locate({setView: true, maxZoom: 16, watch: true, enableHighAccuracy: true});
+    }
+
+    map.on('locationfound', (e) => {
+        if (userMarker) {
+            userMarker.setLatLng(e.latlng);
+        } else {
+            userMarker = L.marker(e.latlng, { icon: getUserIcon(userHeading) }).addTo(map);
+            userMarker.bindTooltip("You").openTooltip();
+        }
+    });
+
+    function getPaletteIcon(color, isTarget = false) {
+        const pinClass = isTarget ? 'pulse-pin' : '';
+        return L.divIcon({
+            className: 'custom-icon',
+            html: `<svg viewBox="0 0 24 24" fill="${color}" width="30" height="30" style="filter:drop-shadow(0 2px 4px rgba(0,0,0,0.5))" class="${pinClass}"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/></svg>`,
+            iconSize: [30, 30], iconAnchor: [15, 30]
+        });
+    }
+
+    L.marker(adnuOrigin, { icon: getPaletteIcon('#FFE08F') }).addTo(map).bindTooltip("ADNU MAIN");
+
+    function filterCat(cat, el) {
+        currentCategory = cat;
+        document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+        el.classList.add('active');
+        updateUI();
+    }
+
+    function updateUI() {
+        const query = document.getElementById('search-box').value.toLowerCase();
+        const container = document.getElementById('list-container');
+        container.innerHTML = "";
+        markers.forEach(m => map.removeLayer(m));
+        markers = [];
+
+        establishments.forEach(loc => {
+            const matchesSearch = loc.name.toLowerCase().includes(query) || loc.zone.toLowerCase().includes(query);
+            const matchesCat = currentCategory === 'All' || 
+                               (currentCategory === 'Hospital' && (loc.type.includes('Hospital') || loc.type.includes('Medical'))) ||
+                               (currentCategory === 'Food' && (loc.type.includes('Food') || loc.type.includes('Resto'))) ||
+                               loc.type.includes(currentCategory);
+
+            if (matchesSearch && matchesCat) {
+                const m = L.marker(loc.coords, { icon: getPaletteIcon(loc.color) }).addTo(map);
+                m.on('click', () => selectPlace(loc));
+                markers.push(m);
+
+                const card = document.createElement('div');
+                card.className = 'list-card';
+                card.style.borderLeftColor = loc.color;
+                card.innerHTML = `<strong>${loc.name}</strong><span>${loc.type} • ${loc.zone}</span>`;
+                card.onclick = () => selectPlace(loc);
+                container.appendChild(card);
+            }
+        });
+    }
+
+    function selectPlace(loc) {
+        if (routing) map.removeControl(routing);
+        markers.forEach(m => {
+            if (m.getLatLng().lat === loc.coords[0]) { m.setIcon(getPaletteIcon(loc.color, true)); m.addTo(map); }
+            else { map.removeLayer(m); }
+        });
+
+        // Determine Start Point (Live Location or ADNU)
+        const startPoint = userMarker ? userMarker.getLatLng() : L.latLng(adnuOrigin);
+        const originLabel = userMarker ? "YOUR LOCATION" : "ADNU";
+
+        routing = L.Routing.control({
+            waypoints: [startPoint, L.latLng(loc.coords)],
+            show: false, createMarker: () => null,
+            lineOptions: { styles: [{ color: '#060771', weight: 7, opacity: 0.8 }] }
+        }).on('routesfound', (e) => {
+            const km = e.routes[0].summary.totalDistance / 1000;
+            document.getElementById('name-txt').innerText = loc.name;
+            document.getElementById('dist-txt').innerText = km.toFixed(2) + " KM FROM " + originLabel;
+            document.getElementById('time-car').innerText = Math.round((km/12)*60 + 5) + "m";
+            document.getElementById('time-trike').innerText = Math.round((km/14)*60 + 3) + "m";
+            document.getElementById('time-walk').innerText = Math.round((km/4.5)*60) + "m";
+            document.getElementById('info-sheet').classList.add('active');
+        }).addTo(map);
+        map.flyTo(loc.coords, 16);
+    }
+
+    map.on('click', () => { 
+        document.getElementById('info-sheet').classList.remove('active'); 
+        updateUI(); 
+        if (routing) map.removeControl(routing); 
+    });
+
+    updateUI();
+</script>
+</body>
+</html>
